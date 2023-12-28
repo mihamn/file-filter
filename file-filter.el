@@ -1,11 +1,11 @@
 
-(defvar-local file-filter-mode-syntax-table nil
+(defvar file-filter-mode-syntax-table nil
   "Syntax table used while in file-filter mode.")
 
-(defvar-local file-filter-mode-abbrev-table nil
+(defvar file-filter-mode-abbrev-table nil
   "Abbrev table used while in file-filter mode.")
 
-(defvar-local file-filter-mode-map () "Keymap for file-filter mode.")
+(defvar file-filter-mode-map () "Keymap for file-filter mode.")
 
 (defvar-local *file-filter-hash* nil "The global scope hash which contains file names and file sizes.")
 
@@ -17,10 +17,11 @@
 
 (defvar-local *file-search-folder-prefix* nil "The parent folder structure above the search point, for insertion in the summary buffer.")
 
+(unless file-filter-mode-syntax-table
+      (setq file-filter-mode-syntax-table (make-syntax-table)))
+
 (unless file-filter-mode-map
   (setq file-filter-mode-map (make-sparse-keymap))
-
-  ;;; MOVEMENT
   (define-key file-filter-mode-map "n"
 	      (lambda (n)
 		(interactive "P")
@@ -35,7 +36,19 @@
 		(let ((current-col (current-column)))
 		  (previous-line n)
 		  (re-search-backward "^" nil t)
-		  (move-to-column (min current-col (current-indentation)))))))
+		  (move-to-column (min current-col (current-indentation))))))
+
+  (define-key file-filter-mode-map "s" #'file-filter/insert-sorted-file-list)
+  (define-key file-filter-mode-map "w" #'file-filter/browse-file-at-point)
+  (define-key file-filter-mode-map "f" #'file-filter/goto-entry)
+  (define-key file-filter-mode-map "v" #'file-filter/visit-entry)
+  (define-key file-filter-mode-map (kbd  "<return>") #'file-filter/goto-entry)
+  (define-key file-filter-mode-map (kbd  "<return>") #'file-filter/visit-entry)
+  (define-key file-filter-mode-map "d" #'file-filter/delete-entry)
+  (define-key file-filter-mode-map "F" #'file-filter/insert-filter-by-extension)
+  (define-key file-filter-mode-map (kbd "m") (lambda () (interactive) (setq *file-filter-hash* (file-filter/make-file-hash "~" 50))))
+  (define-key file-filter-mode-map [?b] 'file-filter/show-hide-build-buffer)
+  )
 
 ;;; HELPER FUNCTIONS
 (defun file-filter/buffer-name-test ()
@@ -110,7 +123,7 @@ has this active buffer."
     hashtotal
     )
   )
-
+;; 
 ;;; GET FILE BUFFERS
 (defmacro file-filter/get-file-buffer (buffer-to-get)
   "On entry into file-filter mode, switch to or
@@ -178,17 +191,19 @@ if it already exists."
       (file-filter/get-file-buffer-build-filter)
       )
     ))
-(define-key file-filter-mode-map [?b] 'file-filter/show-hide-build-buffer)
-
+;; 
 
 ;;; CREATE FILE HASH as Drive is Searched
 (defun file-filter/make-file-hash (&optional folderpath minfilesize)
   "Search folder and child folders of supplied path, and add
 each file and its size to a file hash if it is above the supplied
 minfilesize."
-  (interactive)
+  (interactive (list
+		(read-directory-name "Enter a directory to start the search from" (expand-file-name gnus-home-directory) nil nil "~/")
+		(read-number "Enter a number in megabytes for the minimum file size: " 50 nil)
+		))
   (let* (
-	 (thispath (or folderpath *file-search-folder-prefix*))
+	 (thispath (or folx5oderpath *file-search-folder-prefix*))
 	 (directoryfiles (condition-case nil
 			     (directory-files thispath t "^[^.]+")
 			   (t nil)))
@@ -229,7 +244,6 @@ minfilesize."
     (if (>= hashsize minfilesize)
 	    (file-filter/update-filter-build (format "hash created, with %f files and size %f.\n" (hash-table-count filehash) hashsize)))
     filehash))
-(define-key file-filter-mode-map (kbd "m") (lambda () (interactive) (setq *file-filter-hash* (file-filter/make-file-hash "~" 30))))
 
 
 ;;; INSERT FILE HASH 
@@ -247,7 +261,7 @@ minfilesize."
 	) 				; with-current-buffer
     )
   )
-(define-key file-filter-mode-map "s" #'file-filter/insert-sorted-file-list)
+
 
 (defun file-filter/insert-filter-by-extension (extension-match &optional hash-to-sort)
   "Insert file details into buffer, based on sorted-hash."
@@ -273,7 +287,7 @@ minfilesize."
 	  )
 	(message "total file size is: %fMB" (/ *file-filter-hash-total-filtered* 1000))) 				; with-current-buffer
     ))
-(define-key file-filter-mode-map "F" #'file-filter/insert-filter-by-extension)
+
 
 (defun file-filter/insert-filter-list ()
   "Insert contents of hash into buffer, no sort, or
@@ -295,21 +309,34 @@ buffer."
 	   (linetext (buffer-substring-no-properties (line-beginning-position)
 						     (line-end-position)))
 	   (filename (car (split-string linetext "\t")))
+	   (filepath "")
 	   (delete-decision nil)
 	   )
-      (setq filename (file-filter/get-full-path filename))
+      (setq filepath (file-filter/get-full-path filename))
       (message "filename is %s" filename)
       (setq delete-decision (y-or-n-p (format  "really delete %s?" filename)))
       (if delete-decision
 	  (progn
-	    (delete-file filename nil)
+	    (delete-file filepath nil)
 	    (remhash filename *file-filter-hash*)
 	    (file-filter/insert-sorted-file-list)
 	    ))
       (message "filename %s was %s%s." filename (if delete-decision "" "not ") "deleted")
       ))
   )
-(define-key file-filter-mode-map "d" #'file-filter/delete-entry)
+
+(defun file-filter/visit-entry ()
+  "Go to file at point for editing in *file-filter-search*
+buffer."
+  (interactive)
+  (let* (
+	 (linetext (buffer-substring-no-properties (line-beginning-position)
+						   (line-end-position)))
+	 (filename (car (split-string linetext "\t")))
+	 )
+    (setq filename (file-filter/get-full-path filename))
+    (message "filename is %s" filename)
+    (find-file filename)))
 
 (defun file-filter/goto-entry ()
   "Go to file at point for editing in *file-filter-search*
@@ -322,9 +349,7 @@ buffer."
 	 )
     (setq filename (file-filter/get-full-path filename))
     (message "filename is %s" filename)
-    (find-file filename)))
-(define-key file-filter-mode-map "f" #'file-filter/goto-entry)
-(define-key file-filter-mode-map (kbd  "<return>") #'file-filter/goto-entry)
+    (find-file-read-only filename)))
 
 (defun file-filter/browse-file-at-point ()
   "Open file at point with default program for op system."
@@ -335,7 +360,6 @@ buffer."
 	 (filename (car (split-string linetext "\t"))))
     (setq filename (file-filter/get-full-path filename))
     (browse-url filename)))
-(define-key file-filter-mode-map "w" #'file-filter/browse-file-at-point)
 
 
 (defun file-filter/choose-file-search-folder-prefix ()
@@ -345,24 +369,22 @@ buffer."
   (message "press 'm' to start the file search, which should take a few minutes depending on the size of hard drive.")
   )					;
 
-
 (defun file-filter-mode ()
   "Major mode for viewing files based on a filter,
 to do operations on them including delete and copy."
   (interactive)
-  (unless file-filter-mode-syntax-table
-    (setq file-filter-mode-syntax-table (make-syntax-table)))
   (file-filter/get-file-buffer-file-filter-search)
   (file-filter/get-file-buffer-summarise-filter)
   (file-filter/get-file-buffer-build-filter)
   (switch-to-buffer "*file-filter-search*")
+  (kill-all-local-variables)
   (with-current-buffer "*file-filter-search*"
     (use-local-map file-filter-mode-map)
-    (setq local-abbrev-table file-filter-mode-abbrev-table)
+    (setq local-abbrev-table file-filter-mode-abbrev-table) 
     (set-syntax-table file-filter-mode-syntax-table)
     (setq mode-name "file-filter")
     (setq major-mode 'file-filter-mode)
-      (file-filter/choose-file-search-folder-prefix)
+    (file-filter/choose-file-search-folder-prefix)
     (run-hooks 'file-filter-hook)))
 
-
+(provide 'file-filter)
